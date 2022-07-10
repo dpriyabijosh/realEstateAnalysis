@@ -12,9 +12,13 @@ prepareEnvr <- function(pkg){
 packages <- c("dplyr","tidyverse", "stringr","plyr","reshape","skimr","repr","janitor")
 prepareEnvr(packages)
 
+# Create variables for paths of the datasets
+path_crime <- "https://data.london.gov.uk/download/recorded_crime_summary/2bbd58c7-6be6-40ac-99ed-38c0ee411c8e/MPS%20Borough%20Level%20Crime%20%28Historical%29.csv"
+path_averagePrice <-"http://publicdata.landregistry.gov.uk/market-trend-data/house-price-index-data/Average-prices-2022-03.csv?utm_medium=GOV.UK&utm_source=datadownload&utm_campaign=average_price&utm_term=9.30_18_05_22"
+path_salesVolume <- "http://publicdata.landregistry.gov.uk/market-trend-data/house-price-index-data/Sales-2022-03.csv?utm_medium=GOV.UK&utm_source=datadownload&utm_campaign=sales&utm_term=9.30_18_05_22"
 
 # Load crime data from the csv file
-crime <- read.csv(file = 'MPS Borough Level Crime (Historical).csv', stringsAsFactors = TRUE, fileEncoding = "UTF-8")
+crime <- read.csv(path_crime,stringsAsFactors = TRUE, fileEncoding = "UTF-8")
 head(crime)
 skim(crime)
 cat('The shape of the data set is ', nrow(crimeData),'*', ncol(crimeData),'.')
@@ -43,7 +47,7 @@ skim(crime)
 cat('The shape of the data set is ', nrow(crime),'*', ncol(crime),'.') 
 
 # Load House price dataset and Verify quick overview of data 
-averagePrice <- read.csv(file = 'Average-prices-2022-03.csv', stringsAsFactors = TRUE, fileEncoding = "UTF-8" )
+averagePrice <- read.csv(file = path_averagePrice, stringsAsFactors = TRUE, fileEncoding = "UTF-8" )
 head(averagePrice)
 skim(averagePrice)
 cat('The shape of the data set is ', nrow(averagePrice),'*', ncol(averagePrice),'.')
@@ -56,7 +60,7 @@ head(averagePrice)
 cat('The shape of the average price is',dim(averagePrice)) 
 
 # Load sales volume dataset and verify quick overview of data
-salesData <- read.csv(file = 'Sales-2022-03.csv', stringsAsFactors = TRUE, fileEncoding = "UTF-8"  )
+salesData <- read.csv(file = path_salesVolume, stringsAsFactors = TRUE, fileEncoding = "UTF-8"  )
 head(salesData)
 skim(salesData)
 cat('The shape of the data set is ', nrow(salesData),'*', ncol(salesData),'.')
