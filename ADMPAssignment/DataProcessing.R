@@ -1,8 +1,17 @@
-# Install the necessary R packages
-install.packages(c("dplyr","tidyverse", "stringr","plyr","reshape","skimr","repr","janitor"))
+# prepareEnvr function: install and load multiple R packages.
+# check to see if packages are installed. Install them if they are not, then load them into the R session.
 
-# Load the packages
-library(tidyverse) ; library(dplyr) ; library(stringr); library(reshape); library(plyr); library(skimr); library(repr); library(janitor);
+prepareEnvr <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg)) 
+    install.packages(new.pkg, dependencies = TRUE)
+  sapply(pkg, require, character.only = TRUE)
+}
+
+# Prepare Environment
+packages <- c("dplyr","tidyverse", "stringr","plyr","reshape","skimr","repr","janitor")
+prepareEnvr(packages)
+
 
 # Load crime data from the csv file
 crime <- read.csv(file = 'MPS Borough Level Crime (Historical).csv', stringsAsFactors = TRUE, fileEncoding = "UTF-8")
