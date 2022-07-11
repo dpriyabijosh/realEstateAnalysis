@@ -21,18 +21,33 @@ path_salesVolume <- "http://publicdata.landregistry.gov.uk/market-trend-data/hou
 crime <- read.csv(path_crime,stringsAsFactors = TRUE, fileEncoding = "UTF-8")
 head(crime)
 skim(crime)
-cat('The shape of the data set is ', nrow(crimeData),'*', ncol(crimeData),'.')
+cat('The shape of the data set is ', nrow(crime),'*', ncol(crime),'.')
 
-# Data Pre-processing
+
+######################### Data Preprocessing ############################################### 
+
 # Removing unwanted from the YearMonth Column
 names(crime) = gsub(pattern = "*X", replacement="", x=names(crime)) 
 head(crime) 
-cat('The shape of the data set is ', nrow(crimeData),'*', ncol(crimeData),'.') # verify the shape of dataframe 
+cat('The shape of the data set is ', nrow(crime),'*', ncol(crime),'.') # verify the shape of dataframe 
+
+# Check the Region_Name to identify the boroughs list for necessary transformation
+print(unique(crime$LookUp_BoroughName))
+# Replace "London Heathrow and London City Airports" with "City of London" to avoid data loss while merging
+# # Replace "Westminster" with "City of Westminster" to avoid data loss while merging with average price and sales volume dataset
+crime$LookUp_BoroughName <- recode(crime$LookUp_BoroughName,
+                  'London Heathrow and London City Airports' = 'City of London',
+                  'Westminster'  = 'City of Westminster',
+                  )
+
+# Validate the LookUp_BoroughName column to verify the replaced borough names 
+print(unique(crime$LookUp_BoroughName))
+cat('The shape of the data set is ', nrow(crime),'*', ncol(crime),'.')
 
 # Reshape the data frame by adding 2 variables such as variable(the yearmonth) and value(nvalue of each yearmonth and borough).
 crime <- melt(crime) 
 head(crime)
-# Renamed the columns headers as CrimeType, RegionName, Date and NoOfCrime for MajorText, LookUp_BoroughName, variable and value.
+# Renamed the columns headers as CrimeType, Region_Name, Date and NoOfCrime for MajorText, LookUp_BoroughName, variable and value.
 crime <- crime %>% 
   dplyr::rename(
     CrimeType = MajorText,
@@ -68,12 +83,12 @@ cat('The shape of the data set is ', nrow(salesData),'*', ncol(salesData),'.')
 # Replace the data column with month and date
 salesData$Date <- format(as.Date(salesData$Date,format = "%Y-%m-%d"),"%Y%m")
 head(salesData)
-cat('The shape of the average price is', dim(salesData))
+cat('The shape of the sales volume is', dim(salesData))
+
 
 # Merge the 3 datasets by Date and borough
 df_list <- list(crime, averagePrice, salesData) 
 merged_data <- Reduce(function(x, y) merge(x, y, by=c("Region_Name","Date"), all=TRUE), df_list, accumulate=FALSE)
-merged_data <- arrange(merged_data,"Date")
 head(merged_data, n = 10)
 glimpse(merged_data)
 skim(merged_data)
@@ -87,11 +102,16 @@ transformed_data <- merged_data %>%
   mutate(revenue = Average_Price * Sales_Volume) %>% 
   mutate_if(is.numeric, round)
 head(transformed_data)
+cat('The shape of the transformed data ', nrow(transformed_data),'*', ncol(transformed_data),'.')
 
 ######################### Data cleaning and validation  ####################################
 
 # Remove data with selected time period
 data_cleaned<- subset(transformed_data, Date %in% 201601:202012)
+data_cleaned[
+  order( data_cleaned[,2], data_cleaned[,1] ),
+]
+head(data_cleaned)
 cat('The shape of the data within the time period ', nrow(data_cleaned),'*', ncol(data_cleaned),'.') # checking shape
 cat('Removed row',(nrow(transformed_data)-nrow(data_cleaned)),'\nRemoved columns',(ncol(transformed_data)-ncol(data_cleaned)))
 head(data_cleaned)
