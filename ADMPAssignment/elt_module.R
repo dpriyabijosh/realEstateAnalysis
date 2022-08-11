@@ -1,5 +1,6 @@
 #SetUpConfiguration
 logEnabled <- TRUE
+options(java.parameters = c("-XX:+UseConcMarkSweepGC", "-Xmx8192m"))
 # prepareEnvironment function: install and load multiple R packages.
 # check to see if packages are installed. Install them if they are not, then load them into the R session.
 prepareEnvr <- function(pkg){
@@ -48,14 +49,22 @@ property <- property %>%
 property<-clean_names(property)
 
 # Calculating the average Price
-property <- aggregate(property$price,
-                      by = list(date = property$date,property_type = property$property_type,
-                                build_type = property$build_type,tenure = property$tenure, 
-                                region_name =property$region_name,county = property$county ),
-                      FUN = mean)
+tempProperty <- property
+tempProperty$no_of_sales <- ""
+tempProperty <- aggregate(no_of_sales~ date + property_type  + build_type  + tenure + region_name + county,
+                      data = tempProperty , FUN = length)
+
+property <- aggregate(cbind(price) ~ date + property_type  + build_type  + tenure + region_name + county,
+                      data = property, FUN = mean)
+property$no_of_sales <- tempProperty$no_of_sales 
+
+dim(property)
+head(property)
+rm(tempProperty)
+
 property <- property %>%
   dplyr::rename(
-    average_price = "x",
+    average_price = "price",
   )
 head(property)
 
@@ -204,7 +213,7 @@ dim(social_deprivation)
 
 df_list <- list(property, mortgage)
 
-merged_data <- Reduce(function(x, y) merge(x, y, by=c("region_name","date"), all=TRUE), df_list, accumulate=FALSE)
+merged_data <- Reduce(function(x, y) merge(x, y, by=c("region_name","date"), all.x=TRUE), df_list, accumulate=FALSE)
 head(merged_data, n = 5)
 
 dataValidationFn(merged_data)
@@ -213,8 +222,10 @@ merged_data <- manageDuplicate(merged_data)
 dim(merged_data)
 
 df_list <- list(merged_data,social_deprivation)
-merged_data <- Reduce(function(x, y) merge(x, y, by=c("region_name"), all=TRUE), df_list, accumulate=FALSE)
+merged_data <- Reduce(function(x, y) merge(x, y, by=c("region_name"), all.x=TRUE), df_list, accumulate=FALSE)
 dim(merged_data)
+head(merged_data)
+
 dataValidationFn(merged_data)
 merged_data <- manageNullValues(merged_data)
 merged_data <- manageDuplicate(merged_data)
@@ -222,90 +233,123 @@ dim(merged_data)
 head(merged_data)
 
 # # Write the dataset to single csv file to check the merged dataset
-# write.csv(merged_data, file = "merged_data.csv", row.names = FALSE)
+#write.csv(merged_data, file = "merged_data.csv", row.names = FALSE)
 # getwd()
+merged_data <-fread("merged_data.csv", data.table = FALSE)
+# head(merged_data,5)
+#### Clearing unwanted dataframes created #################
+rm(property, mortgage, social_deprivation, path_deprivation,path_mortgage,path_property, xlsFile)
+#rm(list=ls())
+skim(merged_data)
+
 ##################################### Data Loading ########################################################
 library(sqldf)
 library(DBI)
+
+#Creating connection
 con <- dbConnect(odbc::odbc(), .connection_string = "Driver={Cloudera ODBC Driver for Apache Hive};"
                  , timeout = 10,Host = "sandbox-hdp.hortonworks.com",Port =10000)
+
+#Create database
 dbGetQuery(con, "CREATE DATABASE IF NOT EXISTS realestate")
 table = "use realestate"
 dbGetQuery(con,table)
 
-dbGetQuery(con,"CREATE TABLE DimRegion(area_code string, region_name string, county string)")
 
+########################################### Create Dimensions ########################################
+
+# Create table DimRegion
+dbGetQuery(con,"CREATE TABLE IF NOT EXISTS DimRegion(area_code string, region_name string, county string, PRIMARY KEY(area_code) disable novalidate)")
+# Create a dataframe for DimRegion
 DimRegion <- sqldf("SELECT merged_data.area_code, merged_data.region_name, merged_data.county FROM merged_data
       GROUP BY merged_data.area_code, merged_data.region_name, merged_data.county")
-
-dbGetQuery(con,table)
+# Write the dataframe to Hive datatable
 dbWriteTable(conn = con,"DimRegion", DimRegion, append = TRUE)
-dbGetQuery(con,table)
-dbAppendTable(conn = con,name ="DimRegion",value = DimRegion ,row.names = NULL)
+#dbAppendTable(conn = con,name ="DimRegion",value = DimRegion ,row.names = NULL)
 
-dbGetQuery(con,table)
-dbGetQuery(con,"CREATE TABLE DimTime(date string, year string, month string)")
-dbGetQuery(con,table)
-DimTime <- sqldf("SELECT merged_data.date, SUBSTRING(merged_data.date,1,4) AS Year, SUBSTRING(merged_data.date,5,2) AS month
+
+# Create table DimTime
+dbGetQuery(con,"CREATE TABLE IF NOT EXISTS DimTime(time_id string, year string, month string, PRIMARY KEY(time_id) disable novalidate)")
+# Create dataframe DimTime with select query
+DimTime <- sqldf("SELECT merged_data.date AS time_id, SUBSTRING(merged_data.date,1,4) AS Year, SUBSTRING(merged_data.date,5,2) AS month
  FROM merged_data GROUP BY merged_data.date")
-
-dbGetQuery(con,table)
+#write the dataframe to Hive datatable
 dbWriteTable(conn = con,"DimTime", DimTime, append = TRUE)
-dbAppendTable(conn = con,name ="DimTime",value = DimTime ,row.names = NULL)
 
-dbGetQuery(con,table)
-#dbGetQuery(con, "Drop table if exists DimDepression")
-dbGetQuery(con,"CREATE TABLE DimProperty(property_Id string, property_type string, build_type string,
-           tenure string)")
-dbGetQuery(con,table)
+
+#Create table DimProperty
+dbGetQuery(con,"CREATE TABLE IF NOT EXISTS DimProperty(property_Id string, property_type string, build_type string,
+           tenure string, PRIMARY KEY(property_Id) disable novalidate)")
 DimProperty <- sqldf("SELECT (merged_data.property_type||merged_data.build_type||merged_data.tenure) AS property_Id, merged_data.property_type,
     merged_data.build_type, merged_data.tenure FROM merged_data
     GROUP BY (merged_data.property_type||merged_data.build_type||merged_data.tenure), merged_data.property_type, merged_data.build_type, merged_data.tenure")
-head(DimProperty)
-dbGetQuery(con,table)
 dbWriteTable(conn = con,"DimProperty", value = DimProperty, append = TRUE)
-dbAppendTable(conn = con,name ="DimProperty",value = DimProperty ,row.names = NULL)
-# 
-# dbGetQuery(con,table)
-# #dbGetQuery(con, "Drop table if exists DimProperty")
-# dbGetQuery(con,"CREATE TABLE DimDepression(imd_score string, income_score string,
-#     employment_score string, crime_score string)")
-# dbGetQuery(con,table)
-# DimDepression <- sqldf("SELECT merged_data.imd_score, merged_data.income_score, 
-# merged_data.employment_score, merged_data.crime_score FROM merged_data GROUP BY 
-# merged_data.imd_score, merged_data.income_score, merged_data.employment_score,
-#                        merged_data.crime_score")
-# head(DimDepression)
-# dbGetQuery(con,table)
-# dbWriteTable(conn = con,"DimDepression", value = DimDepression, append = TRUE)
-# dbAppendTable(conn = con,name ="DimDepression",value = DimDepression ,row.names = NULL)
-# 
-dbGetQuery(con,table)
-#dbGetQuery(con, "Drop table if exists DimMortage")
-dbGetQuery(con,"CREATE TABLE DimMortage(mortgage_id string, cash_average_price string, cash_sales_volume string,
+
+
+#dbGetQuery(con, "Drop table if exists DimDepression")
+# Create DimDepression
+dbGetQuery(con,"CREATE TABLE  IF NOT EXISTS DimDepression(depression_id int,imd_score string, income_score string,
+    employment_score string, crime_score string, PRIMARY KEY(depression_id) disable novalidate)")
+DimDepression <- sqldf("SELECT row_number() over () as depression_id, merged_data.imd_score, merged_data.income_score,
+merged_data.employment_score, merged_data.crime_score FROM merged_data GROUP BY
+merged_data.imd_score, merged_data.income_score, merged_data.employment_score,
+                       merged_data.crime_score")
+dbWriteTable(conn = con,"DimDepression", value = DimDepression, append = TRUE)
+
+
+#Create DimMortage
+dbGetQuery(con,"CREATE TABLE  IF NOT EXISTS DimMortage(mortgage_id string, cash_average_price string, cash_sales_volume string,
 mortgage_average_price string, mortgage_sales_volume string, primary key(mortgage_id) disable novalidate)")
-dbGetQuery(con,table)
 DimMortage <- sqldf("SELECT merged_data.area_code|| cast(merged_data.cash_sales_volume as varchar) AS mortgage_id, merged_data.cash_average_price, merged_data.cash_sales_volume,
 merged_data.mortgage_average_price, merged_data.mortgage_sales_volume FROM merged_data
 GROUP BY merged_data.area_code|| cast(merged_data.cash_sales_volume as varchar), merged_data.cash_average_price, merged_data.cash_sales_volume,
 merged_data.mortgage_average_price, merged_data.mortgage_sales_volume")
-head(DimMortage)
-dbGetQuery(con,table)
 dbWriteTable(conn = con,"DimMortage", value = DimMortage, append = TRUE)
-dbAppendTable(conn = con,name ="DimMortage",value = DimMortage ,row.names = NULL)
 
-# SELECT [area_code]+[cash_sales_volume] AS mortgage_id, Test_data.cash_average_price, Test_data.cash_sales_volume, Test_data.mortgage_average_price, Test_data.mortgage_sales_volume INTO TempMortgag
-# FROM Test_data
-# GROUP BY [area_code]+[cash_sales_volume], Test_data.cash_average_price, Test_data.cash_sales_volume, Test_data.mortgage_average_price, Test_data.mortgage_sales_volume;
-ret <- sqldf("SELECT merged_data.area_code|| cast(merged_data.cash_sales_volume as varchar) AS mortgage_id FROM merged_data")
-head(ret)
-# dbGetQuery(con,table)
-# dbGetQuery(con,"CREATE TABLE FactSales_1(area_code string, date string, SumOfno_of_sales, property_Id)")
-# dbGetQuery(con,table)
-# DimMortage <- sqldf("SELECT DimArea.area_code, DimTime.date, Sum(merged_data.no_of_sales) AS SumOfno_of_sales, DimProperty.propertyId, DimDepression.DeprnID
-# FROM DimDepression INNER JOIN (DimProperty INNER JOIN (DimTime INNER JOIN (DimArea INNER JOIN merged_data ON DimArea.area_code = merged_data.area_code) ON DimTime.date = merged_data.date) ON DimProperty.property_type = merged_data.property_type) ON DimDepression.imd_score = merged_data.imd_score
-# GROUP BY DimArea.area_code, DimTime.Date, DimProperty.propertyId, DimDepression.DeprnID")
-# head(DimMortage)
-# dbGetQuery(con,table)
-# dbWriteTable(conn = con,"DimMortage", value = DimMortage, append = TRUE)
-# dbAppendTable(conn = con,name ="DimMortage",value = DimMortage ,row.names = NULL)
+################################# Create Factables  #############################
+
+# Create table FactSales_1
+dbGetQuery(con,"CREATE TABLE IF NOT EXISTS FactSales_1(area_code string, time_id string, SumOfno_of_sales int, property_Id string, depression_id int)")
+FactSales_1 <- sqldf("SELECT DimRegion.area_code, DimTime.time_id, Sum(merged_data.no_of_sales) AS SumOfno_of_sales, DimProperty.property_id, DimDepression.depression_id
+FROM DimDepression INNER JOIN (DimProperty INNER JOIN (DimTime INNER JOIN (DimRegion INNER JOIN merged_data ON DimRegion.area_code = merged_data.area_code) ON DimTime.time_id = merged_data.date)
+ON DimProperty.property_type = merged_data.property_type) ON DimDepression.imd_score = merged_data.imd_score
+GROUP BY DimRegion.area_code, DimTime.time_id, DimProperty.property_Id, DimDepression.depression_ID")
+dbWriteTable(conn = con,"FactSales_1", value = FactSales_1, append = TRUE)
+
+
+# Create table FactAvgPrice
+dbGetQuery(con,"CREATE TABLE IF NOT EXISTS Fact_AvgPrice(area_code string, property_Id string,time_id string,
+           depression_id int, SumOfaverage_price double)")
+#dbGetQuery(con, "drop table Fact_AvgPrice")
+Fact_AvgPrice <- sqldf("SELECT DimRegion.area_code, DimProperty.property_Id, DimTime.time_id, DimDepression.depression_id, Sum(merged_data.average_price) AS SumOfaverage_price
+FROM (((merged_data INNER JOIN DimRegion ON merged_data.area_code = DimRegion.area_code) INNER JOIN DimDepression ON merged_data.imd_score = DimDepression.imd_score) INNER JOIN DimTime 
+ON merged_data.date = DimTime.time_id) INNER JOIN DimProperty ON merged_data.property_type = DimProperty.property_type
+GROUP BY DimRegion.area_code, DimProperty.property_Id, DimTime.time_id, DimDepression.depression_id")
+dbWriteTable(conn = con,"Fact_AvgPrice", value = Fact_AvgPrice , append = TRUE)
+
+
+# Create table FactSales_2
+dbGetQuery(con,"CREATE TABLE IF NOT EXISTS FactSales_2(area_code string, depression_id string,time_id string,
+           SumOfcash_sales_volume double,SumOfmortgage_sales_volume double, mortgage_id string)")
+FactSales_2 <- sqldf("SELECT DimRegion.area_code AS area_code, DimDepression.depression_id, DimTime.time_id,
+Sum(merged_data.cash_sales_volume) AS SumOfcash_sales_volume, Sum(merged_data.mortgage_sales_volume)
+AS SumOfmortgage_sales_volume, DimMortage.mortgage_id 
+FROM DimMortage INNER JOIN (DimDepression INNER JOIN ((merged_data INNER JOIN DimTime ON
+merged_data.date = DimTime.time_id) INNER JOIN DimRegion ON merged_data.area_code = DimRegion.area_code) ON
+DimDepression.imd_score = merged_data.imd_score) ON DimMortage.cash_average_price = merged_data.cash_average_price
+GROUP BY DimRegion.area_code, DimDepression.depression_id, DimTime.time_id, DimMortage.mortgage_id")
+dbWriteTable(conn = con,"FactSales_2", value = FactSales_2, append = TRUE)
+
+## Create table FactCrime
+dbGetQuery(con,"CREATE TABLE IF NOT EXISTS FactSales_2(area_code string, depression_id string,time_id string,
+           SumOfno_of_sales int,crime_score double, SumOfaverage_price double)")
+Fact_Crime <- sqldf("SELECT DimRegion.area_code as area_code , DimDepression.depression_id, DimTime.time_id,
+Sum(merged_data.no_of_sales) AS SumOfno_of_sales, DimDepression.crime_score, Sum(merged_data.average_price) 
+AS SumOfaverage_price FROM DimDepression INNER JOIN ((merged_data INNER JOIN DimTime ON
+merged_data.date = DimTime.time_id) INNER JOIN DimRegion ON merged_data.area_code = DimRegion.area_code) ON
+DimDepression.imd_score = merged_data.imd_score GROUP BY DimRegion.area_code, DimDepression.depression_id,
+                    DimTime.time_id, DimDepression.crime_score")
+dbWriteTable(conn = con,"Fact_Crime", value = Fact_Crime, append = TRUE)
+
+
+
