@@ -232,11 +232,7 @@ merged_data <- manageDuplicate(merged_data)
 dim(merged_data)
 head(merged_data)
 
-# # Write the dataset to single csv file to check the merged dataset
-#write.csv(merged_data, file = "merged_data.csv", row.names = FALSE)
-# getwd()
-merged_data <-fread("merged_data.csv", data.table = FALSE)
-# head(merged_data,5)
+
 #### Clearing unwanted dataframes created #################
 rm(property, mortgage, social_deprivation, path_deprivation,path_mortgage,path_property, xlsFile)
 #rm(list=ls())
@@ -256,6 +252,26 @@ table = "use realestate"
 dbGetQuery(con,table)
 
 
+# Function to write tables as chunks to avoid memory heap error
+writeTablesToHive <- function(df,id){
+  batch_size = 3000 # batchsize
+  # cycles through data by batchsize
+  for (i in 1:ceiling(nrow(df)/batch_size))
+  {
+    # below shows how to cycle through data 
+    batch <- df[(((i - 1)*batch_size) + 1):(batch_size*i), , drop = FALSE] # drop = FALSE keeps it from being converted to a vector 
+    # if below not done then the last batch has Nulls above the number of rows of actual data
+    batch <- batch[!is.na(batch$id),] # ID is a variable I presume is in every row
+    if(i == 1){
+      (dbWriteTable(conn = con, "df", value = batch, append = TRUE,row.names = FALSE))
+    }
+    else{
+      dbAppendTable(conn = con,name ="df",value = batch ,row.names = NULL)
+    } 
+    Sys.sleep(10) # to give some sleep time
+  }
+}
+
 ########################################### Create Dimensions ########################################
 
 # Create table DimRegion
@@ -264,8 +280,7 @@ dbGetQuery(con,"CREATE TABLE IF NOT EXISTS DimRegion(area_code string, region_na
 DimRegion <- sqldf("SELECT merged_data.area_code, merged_data.region_name, merged_data.county FROM merged_data
       GROUP BY merged_data.area_code, merged_data.region_name, merged_data.county")
 # Write the dataframe to Hive datatable
-dbWriteTable(conn = con,"DimRegion", DimRegion, append = TRUE)
-#dbAppendTable(conn = con,name ="DimRegion",value = DimRegion ,row.names = NULL)
+writeTablesToHive(DimRegion,area_code)
 
 
 # Create table DimTime
@@ -274,7 +289,7 @@ dbGetQuery(con,"CREATE TABLE IF NOT EXISTS DimTime(time_id string, year string, 
 DimTime <- sqldf("SELECT merged_data.date AS time_id, SUBSTRING(merged_data.date,1,4) AS Year, SUBSTRING(merged_data.date,5,2) AS month
  FROM merged_data GROUP BY merged_data.date")
 #write the dataframe to Hive datatable
-dbWriteTable(conn = con,"DimTime", DimTime, append = TRUE)
+writeTablesToHive(DimTime,time_id)
 
 
 #Create table DimProperty
@@ -283,7 +298,7 @@ dbGetQuery(con,"CREATE TABLE IF NOT EXISTS DimProperty(property_Id string, prope
 DimProperty <- sqldf("SELECT (merged_data.property_type||merged_data.build_type||merged_data.tenure) AS property_Id, merged_data.property_type,
     merged_data.build_type, merged_data.tenure FROM merged_data
     GROUP BY (merged_data.property_type||merged_data.build_type||merged_data.tenure), merged_data.property_type, merged_data.build_type, merged_data.tenure")
-dbWriteTable(conn = con,"DimProperty", value = DimProperty, append = TRUE)
+writeTablesToHive(DimTime,property_id)
 
 
 #dbGetQuery(con, "Drop table if exists DimDepression")
@@ -294,7 +309,7 @@ DimDepression <- sqldf("SELECT row_number() over () as depression_id, merged_dat
 merged_data.employment_score, merged_data.crime_score FROM merged_data GROUP BY
 merged_data.imd_score, merged_data.income_score, merged_data.employment_score,
                        merged_data.crime_score")
-dbWriteTable(conn = con,"DimDepression", value = DimDepression, append = TRUE)
+writeTablesToHive(DimDepression, depression_id)
 
 
 #Create DimMortage
@@ -304,7 +319,7 @@ DimMortage <- sqldf("SELECT merged_data.area_code|| cast(merged_data.cash_sales_
 merged_data.mortgage_average_price, merged_data.mortgage_sales_volume FROM merged_data
 GROUP BY merged_data.area_code|| cast(merged_data.cash_sales_volume as varchar), merged_data.cash_average_price, merged_data.cash_sales_volume,
 merged_data.mortgage_average_price, merged_data.mortgage_sales_volume")
-dbWriteTable(conn = con,"DimMortage", value = DimMortage, append = TRUE)
+writeTablesToHive(DimMortage, mortgage_id)
 
 ################################# Create Factables  #############################
 
@@ -314,7 +329,7 @@ FactSales_1 <- sqldf("SELECT DimRegion.area_code, DimTime.time_id, Sum(merged_da
 FROM DimDepression INNER JOIN (DimProperty INNER JOIN (DimTime INNER JOIN (DimRegion INNER JOIN merged_data ON DimRegion.area_code = merged_data.area_code) ON DimTime.time_id = merged_data.date)
 ON DimProperty.property_type = merged_data.property_type) ON DimDepression.imd_score = merged_data.imd_score
 GROUP BY DimRegion.area_code, DimTime.time_id, DimProperty.property_Id, DimDepression.depression_ID")
-dbWriteTable(conn = con,"FactSales_1", value = FactSales_1, append = TRUE)
+writeTablesToHive(FactSales_1, area_code)
 
 
 # Create table FactAvgPrice
@@ -325,7 +340,7 @@ Fact_AvgPrice <- sqldf("SELECT DimRegion.area_code, DimProperty.property_Id, Dim
 FROM (((merged_data INNER JOIN DimRegion ON merged_data.area_code = DimRegion.area_code) INNER JOIN DimDepression ON merged_data.imd_score = DimDepression.imd_score) INNER JOIN DimTime 
 ON merged_data.date = DimTime.time_id) INNER JOIN DimProperty ON merged_data.property_type = DimProperty.property_type
 GROUP BY DimRegion.area_code, DimProperty.property_Id, DimTime.time_id, DimDepression.depression_id")
-dbWriteTable(conn = con,"Fact_AvgPrice", value = Fact_AvgPrice , append = TRUE)
+writeTablesToHive(Fact_AvgPrice, area_code)
 
 
 # Create table FactSales_2
@@ -338,7 +353,8 @@ FROM DimMortage INNER JOIN (DimDepression INNER JOIN ((merged_data INNER JOIN Di
 merged_data.date = DimTime.time_id) INNER JOIN DimRegion ON merged_data.area_code = DimRegion.area_code) ON
 DimDepression.imd_score = merged_data.imd_score) ON DimMortage.cash_average_price = merged_data.cash_average_price
 GROUP BY DimRegion.area_code, DimDepression.depression_id, DimTime.time_id, DimMortage.mortgage_id")
-dbWriteTable(conn = con,"FactSales_2", value = FactSales_2, append = TRUE)
+writeTablesToHive(FactSales_2, area_code)
+
 
 ## Create table FactCrime
 dbGetQuery(con,"CREATE TABLE IF NOT EXISTS FactSales_2(area_code string, depression_id string,time_id string,
@@ -349,7 +365,4 @@ AS SumOfaverage_price FROM DimDepression INNER JOIN ((merged_data INNER JOIN Dim
 merged_data.date = DimTime.time_id) INNER JOIN DimRegion ON merged_data.area_code = DimRegion.area_code) ON
 DimDepression.imd_score = merged_data.imd_score GROUP BY DimRegion.area_code, DimDepression.depression_id,
                     DimTime.time_id, DimDepression.crime_score")
-dbWriteTable(conn = con,"Fact_Crime", value = Fact_Crime, append = TRUE)
-
-
-
+writeTablesToHive(Fact_Crime, area_code)
